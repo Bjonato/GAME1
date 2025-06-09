@@ -183,117 +183,7 @@ class Player(pygame.sprite.Sprite):
             self.image = self.images[0]
 
     def xp_to_next(self):
-        return 5 + (self.level - 1) * 2
-
-    def gain_xp(self, amount):
-        self.xp += amount
-        leveled = False
-        while self.xp >= self.xp_to_next():
-            self.xp -= self.xp_to_next()
-            self.level += 1
-            inc = random.randint(1, 2)
-            self.max_hp += inc
-            self.hp += inc
-            self.stat_points += 1
-            leveled = True
-        return leveled
-
-
-class Enemy:
-    """Simple container for enemy stats used in battles."""
-
-    def __init__(self, name, level, max_hp, strength, defense, speed, moves):
-        self.name = name
-        self.level = level
-        self.max_hp = max_hp
-        self.hp = max_hp
-        self.strength = strength
-        self.defense = defense
-        self.speed = speed
-        self.moves = moves
-        self.xp = level
-
-
-def create_enemy(name, level):
-    """Create an enemy with stats scaled by level."""
-    hp = 5 + (level - 1) * 2
-    stat = 2 + (level - 1)
-    moves = ["Scratch"]
-    if name == "Gremlin":
-        moves.append("Slime")
-    return Enemy(name, level, hp, stat, stat, stat, moves)
-
-
-class Menu:
-    def __init__(self, font):
-        self.options = [
-            "Return to Game",
-            "Options",
-            "Team",
-            "Bag",
-            "Save Game",
-            "Load Game",
-            "Quit Game",
-        ]
-        self.font = font
-        self.selected = 0
-        self.visible = False
-        self.message = ""
-        self.message_timer = 0
-
-    def show(self):
-        self.visible = True
-        self.selected = 0
-
-    def hide(self):
-        self.visible = False
-
-    def handle_event(self, event, player):
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP:
-                self.selected = (self.selected - 1) % len(self.options)
-            elif event.key == pygame.K_DOWN:
-                self.selected = (self.selected + 1) % len(self.options)
-            elif event.key == pygame.K_RETURN:
-                return self.activate_option(player)
-
-    def activate_option(self, player):
-        option = self.options[self.selected]
-        if option == "Return to Game":
-            self.hide()
-        elif option == "Team":
-            self.hide()
-            return "team"
-        elif option == "Bag":
-            self.hide()
-            return "bag"
-        elif option == "Options":
-            self.message = f"{option} not implemented"
-            self.message_timer = 120
-        elif option == "Save Game":
-            save_game(player)
-            self.message = "Game saved"
-            self.message_timer = 120
-        elif option == "Load Game":
-            load_game(player)
-            self.message = "Game loaded"
-            self.message_timer = 120
-        elif option == "Quit Game":
-            pygame.quit()
-            sys.exit()
-
-    def update(self):
-        if self.message_timer > 0:
-            self.message_timer -= 1
-        else:
-            self.message = ""
-
-    def draw(self, surface, player):
-        if not self.visible:
-            return
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
-        overlay.set_alpha(180)
-        overlay.fill((0, 0, 0))
+@@ -243,84 +297,87 @@ class Menu:
         surface.blit(overlay, (0, 0))
 
         menu_width = 300
@@ -381,83 +271,7 @@ class TeamView:
             surface.blit(title, (50, 50))
             stats = [
                 f"HP: {player.hp}/{player.max_hp}",
-                f"XP: {player.xp}/{player.xp_to_next()}",
-                f"Strength: {player.strength}",
-                f"Defense: {player.defense}",
-                f"Speed: {player.speed}",
-            ]
-            for i, line in enumerate(stats):
-                render = self.font.render(line, True, (255, 255, 255))
-                surface.blit(render, (50, 100 + i * 30))
-            weapon = player.weapon if player.weapon else "-"
-            wtxt = self.font.render(f"Weapon: {weapon}", True, (255, 255, 255))
-            surface.blit(wtxt, (50, 250))
-            hint = self.font.render("Left/Right: Moves  U: Unequip  Enter/Esc: Back", True, (200, 200, 200))
-            surface.blit(hint, (50, SCREEN_HEIGHT - 50))
-
-
-class LevelUpView:
-    """Screen to allocate stat points after leveling."""
-
-    def __init__(self, font):
-        self.font = font
-        self.options = ["Strength", "Defense", "Speed"]
-        self.index = 0
-        self.active = False
-
-    def start(self):
-        self.index = 0
-        self.active = True
-
-    def handle_event(self, event, player):
-        if not self.active:
-            return None
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP:
-                self.index = (self.index - 1) % len(self.options)
-            elif event.key == pygame.K_DOWN:
-                self.index = (self.index + 1) % len(self.options)
-            elif event.key == pygame.K_RETURN:
-                stat = self.options[self.index].lower()
-                if stat == "strength":
-                    player.base_strength += 1
-                elif stat == "defense":
-                    player.base_defense += 1
-                else:
-                    player.base_speed += 1
-                player.recalc_stats()
-                player.stat_points -= 1
-                self.active = False
-                return "done"
-        return None
-
-    def draw(self, surface):
-        if not self.active:
-            return
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
-        overlay.set_alpha(200)
-        overlay.fill((0, 0, 0))
-        surface.blit(overlay, (0, 0))
-        title = self.font.render("Level up! Choose a stat", True, (255, 255, 255))
-        rect = title.get_rect(center=(SCREEN_WIDTH // 2, 150))
-        surface.blit(title, rect)
-        for i, opt in enumerate(self.options):
-            color = (255, 255, 255) if i == self.index else (170, 170, 170)
-            txt = self.font.render(opt, True, color)
-            r = txt.get_rect(center=(SCREEN_WIDTH // 2, 220 + i * 40))
-            surface.blit(txt, r)
-        hint = self.font.render("Up/Down choose, Enter confirm", True, (200, 200, 200))
-        hr = hint.get_rect(center=(SCREEN_WIDTH // 2, 380))
-        surface.blit(hint, hr)
-
-
-class BagView:
-    """Inventory grid allowing item use or equip."""
-
-    def __init__(self, font):
-        self.font = font
-        self.active = False
-        self.index = 0
+@@ -404,83 +461,98 @@ class BagView:
 
     def open(self):
         self.active = True
@@ -556,10 +370,7 @@ class ShopView:
                 self.active = False
                 return "close"
             elif event.key in (pygame.K_UP, pygame.K_DOWN):
-                self.index = (self.index + (1 if event.key == pygame.K_DOWN else -1)) % len(self.items)
-            elif event.key == pygame.K_RETURN:
-                name = self.items[self.index]
-                price = ITEMS[name]["price"]
+@@ -491,164 +563,413 @@ class ShopView:
                 if player.coins >= price and player.add_item(name):
                     player.coins -= price
         return None
@@ -973,65 +784,7 @@ class Battle:
         if self.message:
             msg = self.font.render(self.message, True, (255, 255, 255))
             rect = msg.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
-            surface.blit(msg, rect)
-
-    def draw_menu(self, surface, options, index):
-        menu_width = 200
-        menu_height = len(options) * 30 + 20
-        menu_x = SCREEN_WIDTH - menu_width - 20
-        menu_y = SCREEN_HEIGHT - menu_height - 20
-        pygame.draw.rect(surface, (50, 50, 50), (menu_x, menu_y, menu_width, menu_height))
-        for i, text in enumerate(options):
-            color = (255, 255, 255) if i == index else (170, 170, 170)
-            render = self.font.render(str(text), True, color)
-            surface.blit(render, (menu_x + 10, menu_y + 10 + i * 30))
-
-    def draw_bar(self, surface, x, y, value, max_value, label):
-        pygame.draw.rect(surface, (255, 255, 255), (x, y, 200, 20), 2)
-        fill = int(196 * value / max_value)
-        pygame.draw.rect(surface, (0, 200, 0), (x + 2, y + 2, fill, 16))
-        text = self.font.render(f"{label}: {value}/{max_value}", True, (255, 255, 255))
-        surface.blit(text, (x, y - 25))
-
-
-def fade(screen, to_black=True):
-    fade_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
-    for alpha in range(0, 255, 15):
-        fade_surface.set_alpha(alpha if to_black else 255 - alpha)
-        fade_surface.fill((0, 0, 0))
-        screen.blit(fade_surface, (0, 0))
-        pygame.display.flip()
-        pygame.time.delay(30)
-
-
-def select_mode(screen, font):
-    """Ask the player to choose Regular or Hardcore mode."""
-    options = ["Regular", "Hardcore"]
-    idx = 0
-    clock = pygame.time.Clock()
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            elif event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_UP, pygame.K_DOWN):
-                    idx = (idx + 1) % 2
-                elif event.key == pygame.K_RETURN:
-                    return idx == 1
-        screen.fill((0, 0, 0))
-        title = font.render("Select Mode", True, (255, 255, 255))
-        trect = title.get_rect(center=(SCREEN_WIDTH // 2, 200))
-        screen.blit(title, trect)
-        for i, opt in enumerate(options):
-            color = (255, 255, 255) if i == idx else (170, 170, 170)
-            txt = font.render(opt, True, color)
-            rect = txt.get_rect(center=(SCREEN_WIDTH // 2, 260 + i * 40))
-            screen.blit(txt, rect)
-        pygame.display.flip()
-        clock.tick(60)
-
-
+@@ -714,173 +1035,206 @@ def select_mode(screen, font):
 def main():
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Simple RPG")
