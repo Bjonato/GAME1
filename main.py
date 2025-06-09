@@ -19,6 +19,23 @@ COIN_DROP = {
     3: (3, 5),
 }
 
+# Item drop chances per room
+ITEM_DROP = {
+    0: [
+        ("Health Potion", 0.15),
+        ("Elite Scraps", 0.05),
+        ("Good Scraps", 0.10),
+        ("Scraps", 0.20),
+    ],
+    1: [
+        ("Health Potion", 0.15),
+        ("Elite Scraps", 0.05),
+        ("Good Scraps", 0.10),
+        ("Scraps", 0.20),
+        ("Slime", 0.10),
+    ],
+}
+
 # Item definitions used for the shop and inventory
 ITEMS = {
     "ShortSword": {
@@ -36,6 +53,26 @@ ITEMS = {
         "type": "potion",
         "heal": 5,
         "price": 3,
+        "stack": 5,
+    },
+    "Scraps": {
+        "type": "craft",
+        "price": 1,
+        "stack": 25,
+    },
+    "Good Scraps": {
+        "type": "craft",
+        "price": 2,
+        "stack": 25,
+    },
+    "Elite Scraps": {
+        "type": "craft",
+        "price": 3,
+        "stack": 25,
+    },
+    "Slime": {
+        "type": "craft",
+        "price": 2,
         "stack": 5,
     },
 }
@@ -61,6 +98,7 @@ class Player(pygame.sprite.Sprite):
         self.name = "Devon"
         self.level = 1
         self.weapon = None
+        self.weapon_bonus = 0
         self.inventory = [None] * 25  # 5x5 grid
         self.coins = 0
         self.max_hp = 10
@@ -83,6 +121,7 @@ class Player(pygame.sprite.Sprite):
             data = ITEMS.get(self.weapon, {})
             self.strength += data.get("strength", 0)
             self.speed += data.get("speed", 0)
+        self.strength += self.weapon_bonus
 
     def add_item(self, name):
         for i, slot in enumerate(self.inventory):
@@ -103,6 +142,21 @@ class Player(pygame.sprite.Sprite):
         if item["qty"] <= 0:
             self.inventory[index] = None
         return item["name"]
+
+    def take_item(self, name):
+        """Remove one of the given item from inventory."""
+        for i, slot in enumerate(self.inventory):
+            if slot and slot["name"] == name:
+                self.remove_item(i)
+                return True
+        return False
+
+    def count_item(self, name):
+        total = 0
+        for slot in self.inventory:
+            if slot and slot["name"] == name:
+                total += slot["qty"]
+        return total
 
     def handle_input(self, keys):
         speed = RUN_SPEED if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else PLAYER_SPEED
@@ -265,6 +319,7 @@ def save_game(player):
         "coins": player.coins,
         "inventory": player.inventory,
         "weapon": player.weapon,
+        "weapon_bonus": player.weapon_bonus,
     }
     with open(SAVE_FILE, "w") as f:
         json.dump(data, f)
@@ -279,6 +334,7 @@ def load_game(player):
             player.coins = data.get("coins", 0)
             player.inventory = data.get("inventory", [None] * 25)
             player.weapon = data.get("weapon")
+            player.weapon_bonus = data.get("weapon_bonus", 0)
             player.recalc_stats()
 
 
@@ -299,6 +355,7 @@ class TeamView:
                 if player.weapon:
                     player.add_item(player.weapon)
                     player.weapon = None
+                    player.weapon_bonus = 0
                     player.recalc_stats()
         return None
 
@@ -426,13 +483,15 @@ class BagView:
                 if not item:
                     return None
                 name = item["name"]
-                if ITEMS[name]["type"] == "weapon":
+                itype = ITEMS[name]["type"]
+                if itype == "weapon":
                     if player.weapon:
                         player.add_item(player.weapon)
                     player.weapon = name
+                    player.weapon_bonus = 0
                     player.recalc_stats()
                     player.remove_item(self.index)
-                else:  # potion
+                elif itype == "potion":
                     if player.hp < player.max_hp:
                         player.hp = min(player.max_hp, player.hp + ITEMS[name]["heal"])
                         player.remove_item(self.index)
@@ -445,6 +504,13 @@ class BagView:
         overlay.set_alpha(200)
         overlay.fill((0, 0, 0))
         surface.blit(overlay, (0, 0))
+        def abbrev(name):
+            if " " in name:
+                return "".join(w[0] for w in name.split()).upper()
+            caps = [c for c in name if c.isupper()]
+            if len(caps) >= 2:
+                return "".join(caps[:2])
+            return name[:2].upper()
         start_x = 100
         start_y = 80
         for idx in range(25):
@@ -454,11 +520,17 @@ class BagView:
             pygame.draw.rect(surface, (80, 80, 80), rect, 2)
             item = player.inventory[idx]
             if item:
-                txt = f"{item['name']} x{item['qty']}" if ITEMS[item['name']].get('stack') else item['name']
+                ab = abbrev(item['name'])
+                txt = f"{ab}x{item['qty']}" if ITEMS[item['name']].get('stack') else ab
                 render = self.font.render(txt, True, (255, 255, 255))
                 surface.blit(render, (x + 5, y + 15))
             if idx == self.index:
                 pygame.draw.rect(surface, (255, 255, 0), rect, 3)
+        selected = player.inventory[self.index]
+        if selected:
+            full = f"{selected['name']} x{selected['qty']}" if ITEMS[selected['name']].get('stack') else selected['name']
+            top = self.font.render(full, True, (255, 255, 255))
+            surface.blit(top, (50, 30))
         hint = self.font.render("Arrows: move  Enter: use/equip  Esc: back", True, (200, 200, 200))
         surface.blit(hint, (50, SCREEN_HEIGHT - 40))
 
@@ -513,20 +585,248 @@ class ShopView:
         surface.blit(hint, (50, SCREEN_HEIGHT - 30))
 
 
+class AnvilView:
+    """Upgrade scraps or weapons."""
+
+    def __init__(self, font):
+        self.font = font
+        self.active = False
+        self.tab = 0  # 0 = scraps, 1 = smithing
+        self.index = 0
+        self.row = 1  # 0 = scrap counts, 1 = slots
+        self.slots = [None] * 5
+        self.scrap_type = None
+        self.weapon_slots = []
+
+    def open(self, player):
+        self.active = True
+        self.tab = 0
+        self.index = 0
+        self.row = 1
+        self.slots = [None] * 5
+        self.scrap_type = None
+        self.weapon_slots = [None] * (3 if player.weapon == "LongSword" else 2)
+
+    def handle_event(self, event, player):
+        if not self.active:
+            return None
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.return_items(player)
+                self.active = False
+                return "close"
+            elif event.key in (pygame.K_TAB, pygame.K_LEFT, pygame.K_RIGHT):
+                if event.key == pygame.K_TAB:
+                    self.tab = 1 - self.tab
+                    self.index = 0
+                    self.row = 1
+                elif event.key == pygame.K_LEFT:
+                    if self.row == 0:
+                        self.index = (self.index - 1) % 3
+                    else:
+                        self.index = (self.index - 1) % self.slot_count()
+                elif event.key == pygame.K_RIGHT:
+                    if self.row == 0:
+                        self.index = (self.index + 1) % 3
+                    else:
+                        self.index = (self.index + 1) % self.slot_count()
+            elif event.key in (pygame.K_UP, pygame.K_DOWN) and self.tab == 0:
+                if event.key == pygame.K_UP and self.row == 1:
+                    self.row = 0
+                    self.index = 0
+                elif event.key == pygame.K_DOWN and self.row == 0:
+                    self.row = 1
+                    self.index = 0
+            elif event.key == pygame.K_RETURN and event.mod & pygame.KMOD_SHIFT:
+                if self.tab == 0 and self.row == 0:
+                    self.add_from_count(player, all=True)
+                else:
+                    self.shift_add(player)
+            elif event.key == pygame.K_RETURN:
+                if self.tab == 0 and self.row == 0:
+                    self.add_from_count(player, all=False)
+                else:
+                    self.upgrade(player)
+            elif event.key == pygame.K_BACKSPACE and self.row == 1:
+                self.remove_slot(player)
+        return None
+
+    def slot_count(self):
+        return 5 if self.tab == 0 else len(self.weapon_slots)
+
+    def return_items(self, player):
+        for i, item in enumerate(self.slots):
+            if item:
+                player.add_item(item)
+                self.slots[i] = None
+        for i, item in enumerate(self.weapon_slots):
+            if item:
+                player.add_item(item)
+                self.weapon_slots[i] = None
+        self.scrap_type = None
+
+    def add_from_count(self, player, all=False):
+        names = ["Scraps", "Good Scraps", "Elite Scraps"]
+        scrap = names[self.index]
+        added = False
+        while True:
+            if not player.take_item(scrap):
+                break
+            for i in range(5):
+                if self.slots[i] is None:
+                    self.slots[i] = scrap
+                    self.scrap_type = scrap if self.scrap_type is None else self.scrap_type
+                    added = True
+                    break
+            else:
+                player.add_item(scrap)
+                break
+            if not all:
+                break
+        if not added:
+            return
+
+    def shift_add(self, player):
+        if self.tab == 0:
+            if self.scrap_type is None:
+                for name in ("Scraps", "Good Scraps"):
+                    if player.take_item(name):
+                        self.scrap_type = name
+                        for i in range(5):
+                            if self.slots[i] is None:
+                                self.slots[i] = name
+                                return
+                        player.add_item(name)
+                        return
+            else:
+                if player.take_item(self.scrap_type):
+                    for i in range(5):
+                        if self.slots[i] is None:
+                            self.slots[i] = self.scrap_type
+                            return
+                    player.add_item(self.scrap_type)
+        else:
+            for scrap in ("Elite Scraps", "Good Scraps", "Scraps"):
+                if player.take_item(scrap):
+                    for i in range(len(self.weapon_slots)):
+                        if self.weapon_slots[i] is None:
+                            self.weapon_slots[i] = scrap
+                            return
+                    player.add_item(scrap)
+                    return
+
+    def remove_slot(self, player):
+        if self.tab == 0:
+            if self.slots[self.index]:
+                player.add_item(self.slots[self.index])
+                self.slots[self.index] = None
+                if not any(self.slots):
+                    self.scrap_type = None
+        else:
+            if self.weapon_slots[self.index]:
+                player.add_item(self.weapon_slots[self.index])
+                self.weapon_slots[self.index] = None
+
+    def upgrade(self, player):
+        if self.tab == 0:
+            if self.scrap_type and all(self.slots):
+                result = "Good Scraps" if self.scrap_type == "Scraps" else "Elite Scraps"
+                player.add_item(result)
+                self.slots = [None] * 5
+                self.scrap_type = None
+        else:
+            bonus = 0
+            for scrap in self.weapon_slots:
+                if scrap == "Scraps":
+                    bonus += 1
+                elif scrap == "Good Scraps":
+                    bonus += 2
+                elif scrap == "Elite Scraps":
+                    bonus += 3
+            if bonus:
+                player.weapon_bonus += bonus
+                player.recalc_stats()
+                self.weapon_slots = [None] * len(self.weapon_slots)
+
+    def draw(self, surface, player):
+        if not self.active:
+            return
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill((0, 0, 0))
+        surface.blit(overlay, (0, 0))
+        tabs = ["Scraps", "Smithing"]
+        for i, name in enumerate(tabs):
+            color = (255, 255, 255) if i == self.tab else (170, 170, 170)
+            txt = self.font.render(name, True, color)
+            surface.blit(txt, (50 + i * 120, 40))
+        if self.tab == 0:
+            counts = [
+                player.count_item("Scraps"),
+                player.count_item("Good Scraps"),
+                player.count_item("Elite Scraps"),
+            ]
+            labels = ["Scraps", "Good", "Elite"]
+            for i, lbl in enumerate(labels):
+                clr = (255, 255, 0) if self.row == 0 and self.index == i else (255, 255, 255)
+                txt = self.font.render(f"{lbl}: {counts[i]}", True, clr)
+                surface.blit(txt, (SCREEN_WIDTH - 180, 80 + i * 30))
+            for i in range(5):
+                x = SCREEN_WIDTH // 2 - 110 + i * 55
+                y = SCREEN_HEIGHT // 2
+                rect = pygame.Rect(x, y, 40, 40)
+                pygame.draw.rect(surface, (80, 80, 80), rect, 2)
+                if self.slots[i]:
+                    txt = self.font.render("S", True, (255, 255, 255))
+                    rect2 = txt.get_rect(center=rect.center)
+                    surface.blit(txt, rect2)
+                if self.row == 1 and i == self.index:
+                    pygame.draw.rect(surface, (255, 255, 0), rect, 2)
+            if self.row == 0:
+                hint = "Enter add  Shift+Enter fill  Up/Down switch"
+            else:
+                hint = "Enter upgrade  Backspace remove  Up/Down switch"
+        else:
+            start_x = SCREEN_WIDTH // 2 - len(self.weapon_slots) * 30
+            for i in range(len(self.weapon_slots)):
+                rect = pygame.Rect(start_x + i * 60, SCREEN_HEIGHT // 2, 40, 40)
+                pygame.draw.rect(surface, (80, 80, 80), rect, 2)
+                scrap = self.weapon_slots[i]
+                if scrap:
+                    txt = self.font.render("S", True, (255, 255, 255))
+                    rect2 = txt.get_rect(center=rect.center)
+                    surface.blit(txt, rect2)
+                if i == self.index:
+                    pygame.draw.rect(surface, (255, 255, 0), rect, 2)
+            wtxt = self.font.render(f"Weapon: {player.weapon} +{player.weapon_bonus}", True, (255, 255, 255))
+            surface.blit(wtxt, (50, 90))
+            hint = "Shift+Enter add  Enter apply  Backspace remove"
+        h = self.font.render(hint, True, (200, 200, 200))
+        surface.blit(h, (50, SCREEN_HEIGHT - 40))
+
+
+class Sign:
+    def __init__(self, rect, text):
+        self.rect = rect
+        self.text = text
+
+
 class Room:
-    def __init__(self, color, encounter_rect=None, enemy_level=1):
+    def __init__(self, color, encounter_rect=None, enemy_level=1, sign=None):
         self.color = color
         self.encounter_rect = encounter_rect
         self.enemy_level = enemy_level
+        self.sign = sign
 
 
 class Battle:
-    def __init__(self, player, enemy, font, player_img, enemy_img):
+    def __init__(self, player, enemy, font, player_img, enemy_img, room_idx):
         self.player = player
         self.enemy = enemy
         self.font = font
         self.player_img = player_img
         self.enemy_img = enemy_img
+        self.room_idx = room_idx
         self.menu_opts = ["Fight", "Bag", "Switch", "Run"]
         self.menu_index = 0
         self.move_index = 0
@@ -536,6 +836,7 @@ class Battle:
         self.msg_timer = 0
         self.victory_xp = 0
         self.victory_coins = 0
+        self.victory_item = None
         self.orig_speed = player.speed
         self.slow_turns = 0
 
@@ -579,10 +880,22 @@ class Battle:
         elif self.state in {"victory", "defeat", "run"}:
             if event.key == pygame.K_RETURN:
                 if self.state == "victory" and self.victory_xp:
+                    msg = f"You won! Gained {self.victory_xp} XP and {self.victory_coins} coins."
                     self.player.gain_xp(self.victory_xp)
                     self.player.coins += self.victory_coins
+                    if self.victory_item:
+                        if self.player.add_item(self.victory_item):
+                            msg += f" Found {self.victory_item}!"
+                        else:
+                            msg += f" Couldn't carry {self.victory_item}."
+                    self.message = msg
                     self.victory_xp = 0
                     self.victory_coins = 0
+                    self.victory_item = None
+                    self.state = "message"
+                    self.msg_timer = 60
+                    self.next_state = "end"
+                    return
                 self.state = "end"
 
     def player_move(self, name):
@@ -603,6 +916,7 @@ class Battle:
             self.victory_xp = self.enemy.xp
             drop = COIN_DROP.get(self.enemy.level, (self.enemy.level, self.enemy.level + 2))
             self.victory_coins = random.randint(*drop)
+            self.victory_item = self.roll_drop()
         else:
             self.next_state = "enemy"
         self.state = "message"
@@ -626,6 +940,13 @@ class Battle:
         self.next_state = "defeat" if self.player.hp <= 0 else "menu"
         self.state = "message"
         self.msg_timer = 60
+
+    def roll_drop(self):
+        drops = ITEM_DROP.get(self.room_idx, [])
+        for name, chance in drops:
+            if random.random() < chance:
+                return name
+        return None
 
     def update(self):
         if self.state == "enemy" and self.msg_timer == 0:
@@ -736,16 +1057,32 @@ def main():
     team_view = TeamView(font)
     bag_view = BagView(font)
     shop_view = ShopView(font)
+    anvil_view = AnvilView(font)
     levelup_view = LevelUpView(font)
     team_active = False
     bag_active = False
     shop_active = False
+    anvil_active = False
 
     shop_rect = pygame.Rect(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT - 120, 80, 80)
+    anvil_rect = pygame.Rect(SCREEN_WIDTH // 2 + 60, SCREEN_HEIGHT - 120, 40, 40)
     rooms = [
-        Room((60, 120, 60), enemy_level=1),
-        Room((80, 100, 140), pygame.Rect(300, 200, 200, 200), enemy_level=1),
-        Room((100, 80, 120), pygame.Rect(250, 150, 300, 200), enemy_level=2),
+        Room(
+            (60, 120, 60),
+            enemy_level=1,
+            sign=Sign(pygame.Rect(SCREEN_WIDTH // 2 - 20, 40, 40, 30), "Route 1"),
+        ),
+        Room(
+            (80, 100, 140),
+            pygame.Rect(300, 200, 200, 200),
+            enemy_level=1,
+            sign=Sign(pygame.Rect(SCREEN_WIDTH // 2 - 60, 40, 120, 30), "Sewer Entrance"),
+        ),
+        Room(
+            (100, 80, 120),
+            pygame.Rect(250, 150, 300, 200),
+            enemy_level=2,
+        ),
     ]
     current_room = 0
     prev_pos = player.rect.topleft
@@ -771,10 +1108,13 @@ def main():
             if levelup_view.active:
                 levelup_view.handle_event(event, player)
                 continue
-            if game_state == "map" and not menu.visible and not team_active and not bag_active and not shop_active:
+            if game_state == "map" and not menu.visible and not team_active and not bag_active and not shop_active and not anvil_active:
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and current_room == 0 and player.rect.colliderect(shop_rect):
                     shop_active = True
                     shop_view.open()
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and current_room == 0 and player.rect.colliderect(anvil_rect):
+                    anvil_active = True
+                    anvil_view.open(player)
             if game_state == "map" and menu.visible and not team_active and not bag_active and not shop_active:
                 action = menu.handle_event(event, player)
                 if action == "team":
@@ -796,10 +1136,14 @@ def main():
                 result = shop_view.handle_event(event, player)
                 if result == "close":
                     shop_active = False
+            elif game_state == "map" and anvil_active:
+                result = anvil_view.handle_event(event, player)
+                if result == "close":
+                    anvil_active = False
             elif game_state == "battle" and battle:
                 battle.handle_event(event)
 
-        if game_state == "map" and not menu.visible and not team_active and not bag_active and not shop_active:
+        if game_state == "map" and not menu.visible and not team_active and not bag_active and not shop_active and not anvil_active:
             player.handle_input(keys)
             # Room transitions
             if current_room == 0 and player.rect.top < 0:
@@ -832,7 +1176,7 @@ def main():
                             enemy_img = enemy_img2
                         else:
                             enemy_img = enemy_img3
-                        battle = Battle(player, enemy, font, player_img, enemy_img)
+                        battle = Battle(player, enemy, font, player_img, enemy_img, current_room)
                         fade(screen, True)
                         game_state = "battle"
                         encounter_timer = 0
@@ -863,6 +1207,14 @@ def main():
                 pygame.draw.rect(screen, (40, 80, 40), room.encounter_rect)
             if current_room == 0:
                 pygame.draw.rect(screen, (200, 200, 50), shop_rect)
+                pygame.draw.rect(screen, (120, 120, 120), anvil_rect)
+            if room.sign:
+                pygame.draw.rect(screen, (150, 100, 50), room.sign.rect)
+                if player.rect.colliderect(room.sign.rect):
+                    txt = font.render(room.sign.text, True, (255, 255, 255))
+                    rect = txt.get_rect(center=(room.sign.rect.centerx, room.sign.rect.top - 10))
+                    pygame.draw.rect(screen, (0, 0, 0), rect.inflate(8, 8))
+                    screen.blit(txt, rect)
             screen.blit(player.image, player.rect)
             menu.draw(screen, player)
             if team_active:
@@ -871,6 +1223,8 @@ def main():
                 bag_view.draw(screen, player)
             if shop_active:
                 shop_view.draw(screen, player)
+            if anvil_active:
+                anvil_view.draw(screen, player)
             if levelup_view.active:
                 levelup_view.draw(screen)
         elif game_state == "battle" and battle:
