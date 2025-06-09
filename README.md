@@ -30,6 +30,8 @@ Three rooms are available. Walk north from the first area to reach the second
 and again to reach the third. Rooms two and three contain darker zones where
 random encounters may happen. The encounter rate defaults to 40% but can be
 tweaked via the `ENCOUNTER_RATE` constant in `main.py`.
+Small wooden signs mark the exits; stand next to one to see the name of the next
+area (Home, Route 1 and Sewer Entrance).
 
 When an encounter occurs the screen fades to a simple battle screen. The
 interface shows the player and enemy HP along with a menu containing **Fight**,
@@ -38,6 +40,11 @@ After victory you earn experience and coins based on enemy level. Coins can be
 spent at the shop in the starting area (press `Space` while standing on the
 yellow square). The Bag screen lets you equip swords or drink health potions.
 Items stack up to five in a slot.
+
+Enemies now have a chance to drop items after battle. In the first two areas
+you may find different tiers of **Scraps**, health potions and even **Slime** in
+the second room. Scrap items stack up to 25, while Slime stacks to 5 like
+potions.
 
 ### Leveling
 Defeating enemies grants experience based on their level. When enough XP is
