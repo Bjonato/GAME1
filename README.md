@@ -36,3 +36,12 @@ interface shows the player and enemy HP along with a menu containing **Fight**,
 **Run** work. This is a small foundation for further expansion. The character
 sprite is embedded directly in `main.py` using Base64 so no binary assets are
 required.
+
+### Leveling
+Defeating enemies grants experience based on their level. When enough XP is
+gained your character levels up, increasing max HP by 1–2 and awarding a stat
+point. After each level up a screen will prompt you to raise either Strength,
+Defense, or Speed.
+
+At startup you can select **Regular** or **Hardcore** mode. Hardcore boosts all
+enemies by one level, making battles tougher but yielding more XP.

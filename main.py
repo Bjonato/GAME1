@@ -38,6 +38,8 @@ class Player(pygame.sprite.Sprite):
         self.defense = 3
         self.speed = 3
         self.moves = ["Slash", "Prepare"]
+        self.xp = 0
+        self.stat_points = 0
 
     def handle_input(self, keys):
         speed = RUN_SPEED if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else PLAYER_SPEED
@@ -53,18 +55,43 @@ class Player(pygame.sprite.Sprite):
         self.rect.x += dx
         self.rect.y += dy
 
+    def xp_to_next(self):
+        return 5 + (self.level - 1) * 2
+
+    def gain_xp(self, amount):
+        self.xp += amount
+        leveled = False
+        while self.xp >= self.xp_to_next():
+            self.xp -= self.xp_to_next()
+            self.level += 1
+            inc = random.randint(1, 2)
+            self.max_hp += inc
+            self.hp += inc
+            self.stat_points += 1
+            leveled = True
+        return leveled
+
 
 class Enemy:
     """Simple container for enemy stats used in battles."""
 
-    def __init__(self, name, max_hp, strength, defense, speed, moves):
+    def __init__(self, name, level, max_hp, strength, defense, speed, moves):
         self.name = name
+        self.level = level
         self.max_hp = max_hp
         self.hp = max_hp
         self.strength = strength
         self.defense = defense
         self.speed = speed
         self.moves = moves
+        self.xp = level
+
+
+def create_enemy(name, level):
+    """Create an enemy with stats scaled by level."""
+    hp = 5 + (level - 1) * 2
+    stat = 2 + (level - 1)
+    return Enemy(name, level, hp, stat, stat, stat, ["Scratch"])
 
 
 class Menu:
@@ -201,6 +228,7 @@ class TeamView:
             surface.blit(title, (50, 50))
             stats = [
                 f"HP: {player.hp}/{player.max_hp}",
+                f"XP: {player.xp}/{player.xp_to_next()}",
                 f"Strength: {player.strength}",
                 f"Defense: {player.defense}",
                 f"Speed: {player.speed}",
@@ -216,11 +244,65 @@ class TeamView:
             surface.blit(hint, (50, SCREEN_HEIGHT - 50))
 
 
+class LevelUpView:
+    """Screen to allocate stat points after leveling."""
+
+    def __init__(self, font):
+        self.font = font
+        self.options = ["Strength", "Defense", "Speed"]
+        self.index = 0
+        self.active = False
+
+    def start(self):
+        self.index = 0
+        self.active = True
+
+    def handle_event(self, event, player):
+        if not self.active:
+            return None
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                self.index = (self.index - 1) % len(self.options)
+            elif event.key == pygame.K_DOWN:
+                self.index = (self.index + 1) % len(self.options)
+            elif event.key == pygame.K_RETURN:
+                stat = self.options[self.index].lower()
+                if stat == "strength":
+                    player.strength += 1
+                elif stat == "defense":
+                    player.defense += 1
+                else:
+                    player.speed += 1
+                player.stat_points -= 1
+                self.active = False
+                return "done"
+        return None
+
+    def draw(self, surface):
+        if not self.active:
+            return
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill((0, 0, 0))
+        surface.blit(overlay, (0, 0))
+        title = self.font.render("Level up! Choose a stat", True, (255, 255, 255))
+        rect = title.get_rect(center=(SCREEN_WIDTH // 2, 150))
+        surface.blit(title, rect)
+        for i, opt in enumerate(self.options):
+            color = (255, 255, 255) if i == self.index else (170, 170, 170)
+            txt = self.font.render(opt, True, color)
+            r = txt.get_rect(center=(SCREEN_WIDTH // 2, 220 + i * 40))
+            surface.blit(txt, r)
+        hint = self.font.render("Up/Down choose, Enter confirm", True, (200, 200, 200))
+        hr = hint.get_rect(center=(SCREEN_WIDTH // 2, 380))
+        surface.blit(hint, hr)
+
 
 class Room:
-    def __init__(self, color, encounter_rect=None):
+    def __init__(self, color, encounter_rect=None, enemy_level=1):
         self.color = color
         self.encounter_rect = encounter_rect
+        self.enemy_level = enemy_level
 
 
 class Battle:
@@ -237,6 +319,7 @@ class Battle:
         self.next_state = "menu"
         self.message = ""
         self.msg_timer = 0
+        self.victory_xp = 0
 
     def handle_event(self, event):
         if event.type != pygame.KEYDOWN:
@@ -271,8 +354,15 @@ class Battle:
         elif self.state == "message":
             if event.key == pygame.K_RETURN:
                 self.state = self.next_state
+                if self.state == "victory":
+                    self.message = f"You won! Gained {self.victory_xp} XP."
+                elif self.state == "defeat":
+                    self.message = "You were defeated..."
         elif self.state in {"victory", "defeat", "run"}:
             if event.key == pygame.K_RETURN:
+                if self.state == "victory" and self.victory_xp:
+                    self.player.gain_xp(self.victory_xp)
+                    self.victory_xp = 0
                 self.state = "end"
 
     def player_move(self, name):
@@ -284,7 +374,11 @@ class Battle:
             dmg = max(1, dmg)
             self.enemy.hp -= dmg
             self.message = f"You used Slash! {self.enemy.name} took {dmg} damage."
-        self.next_state = "victory" if self.enemy.hp <= 0 else "enemy"
+        if self.enemy.hp <= 0:
+            self.next_state = "victory"
+            self.victory_xp = self.enemy.xp
+        else:
+            self.next_state = "enemy"
         self.state = "message"
         self.msg_timer = 60
 
@@ -352,11 +446,41 @@ def fade(screen, to_black=True):
         pygame.time.delay(30)
 
 
+def select_mode(screen, font):
+    """Ask the player to choose Regular or Hardcore mode."""
+    options = ["Regular", "Hardcore"]
+    idx = 0
+    clock = pygame.time.Clock()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_UP, pygame.K_DOWN):
+                    idx = (idx + 1) % 2
+                elif event.key == pygame.K_RETURN:
+                    return idx == 1
+        screen.fill((0, 0, 0))
+        title = font.render("Select Mode", True, (255, 255, 255))
+        trect = title.get_rect(center=(SCREEN_WIDTH // 2, 200))
+        screen.blit(title, trect)
+        for i, opt in enumerate(options):
+            color = (255, 255, 255) if i == idx else (170, 170, 170)
+            txt = font.render(opt, True, color)
+            rect = txt.get_rect(center=(SCREEN_WIDTH // 2, 260 + i * 40))
+            screen.blit(txt, rect)
+        pygame.display.flip()
+        clock.tick(60)
+
+
 def main():
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Simple RPG")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 32)
+
+    hardcore = select_mode(screen, font)
 
     img_bytes = base64.b64decode(CHARACTER_IMAGE_B64)
     player_img = pygame.image.load(BytesIO(img_bytes)).convert_alpha()
@@ -368,11 +492,12 @@ def main():
     player = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, player_img)
     menu = Menu(font)
     team_view = TeamView(font)
+    levelup_view = LevelUpView(font)
     team_active = False
 
     rooms = [
-        Room((60, 120, 60)),
-        Room((80, 100, 140), pygame.Rect(300, 200, 200, 200)),
+        Room((60, 120, 60), enemy_level=1),
+        Room((80, 100, 140), pygame.Rect(300, 200, 200, 200), enemy_level=1),
     ]
     current_room = 0
     prev_pos = player.rect.topleft
@@ -395,6 +520,9 @@ def main():
                     menu.hide()
                 else:
                     menu.show()
+            if levelup_view.active:
+                levelup_view.handle_event(event, player)
+                continue
             if game_state == "map" and menu.visible and not team_active:
                 action = menu.handle_event(event, player)
                 if action == "team":
@@ -423,7 +551,8 @@ def main():
                     encounter_timer += 1
                     if encounter_timer >= encounter_threshold and random.random() < ENCOUNTER_RATE:
                         name = random.choice(["Slime", "Bat"])
-                        enemy = Enemy(name, 5, 2, 2, 2, ["Scratch"])
+                        lvl = room.enemy_level + (1 if hardcore else 0)
+                        enemy = create_enemy(name, lvl)
                         enemy_img = enemy_img1 if name == "Slime" else enemy_img2
                         battle = Battle(player, enemy, font, player_img, enemy_img)
                         fade(screen, True)
@@ -444,6 +573,8 @@ def main():
                 game_state = "map"
                 battle = None
                 player.hp = max(1, player.hp)  # ensure not zero
+                if player.stat_points > 0:
+                    levelup_view.start()
 
         if game_state == "map":
             menu.update()
@@ -455,6 +586,8 @@ def main():
             menu.draw(screen)
             if team_active:
                 team_view.draw(screen, player)
+            if levelup_view.active:
+                levelup_view.draw(screen)
         elif game_state == "battle" and battle:
             battle.draw(screen)
 
