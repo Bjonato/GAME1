@@ -3,7 +3,6 @@ import json
 import os
 import sys
 import random
-import copy
 from io import BytesIO
 import pygame
 
@@ -50,6 +49,19 @@ class Player(pygame.sprite.Sprite):
             dy += speed
         self.rect.x += dx
         self.rect.y += dy
+
+
+class Enemy:
+    """Simple container for enemy stats used in battles."""
+
+    def __init__(self, name, max_hp, strength, defense, speed, moves):
+        self.name = name
+        self.max_hp = max_hp
+        self.hp = max_hp
+        self.strength = strength
+        self.defense = defense
+        self.speed = speed
+        self.moves = moves
 
 
 class Menu:
@@ -338,17 +350,10 @@ def main():
             if room.encounter_rect and room.encounter_rect.colliderect(player.rect):
                 if player.rect.topleft != prev_pos:
                     if random.random() < ENCOUNTER_RATE:
-                        enemy_stats = {
-                            "name": random.choice(["Slime", "Bat"]),
-                            "max_hp": 5,
-                            "hp": 5,
-                            "strength": 2,
-                            "defense": 2,
-                            "speed": 2,
-                            "moves": ["Scratch"],
-                        }
-                        enemy_img = enemy_img1 if enemy_stats["name"] == "Slime" else enemy_img2
-                        battle = Battle(player, copy.deepcopy(enemy_stats), font, player_img, enemy_img)
+                        name = random.choice(["Slime", "Bat"])
+                        enemy = Enemy(name, 5, 2, 2, 2, ["Scratch"])
+                        enemy_img = enemy_img1 if name == "Slime" else enemy_img2
+                        battle = Battle(player, enemy, font, player_img, enemy_img)
                         fade(screen, True)
                         game_state = "battle"
             prev_pos = player.rect.topleft
