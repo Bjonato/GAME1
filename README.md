@@ -17,7 +17,8 @@ the pause menu.
 
 ### Pause menu options
 - **Return to Game**: Close the menu
-- **Options**, **Team**, **Bag**: Not implemented yet
+- **Options**, **Bag**: Not implemented yet
+- **Team**: View Devon's moves and stats
 - **Save Game**: Saves player position to `savegame.json`
 - **Load Game**: Restores position from `savegame.json` if it exists
 - **Quit Game**: Exit
@@ -25,8 +26,9 @@ the pause menu.
 ### Gameplay
 Two rooms are available. Walk up through the top edge of the first area to
 enter the second room. The second room contains a darker zone in the middle
-where random encounters may happen. The encounter rate defaults to 40% but can
-be tweaked via the `ENCOUNTER_RATE` constant in `main.py`.
+where random encounters may happen. You can walk around for a short time (2–5
+seconds) before a battle check occurs. The encounter rate defaults to 40% but
+can be tweaked via the `ENCOUNTER_RATE` constant in `main.py`.
 
 When an encounter occurs the screen fades to a simple battle screen. The
 interface shows the player and enemy HP along with a menu containing **Fight**,

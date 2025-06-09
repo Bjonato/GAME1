@@ -11,7 +11,8 @@ SCREEN_HEIGHT = 600
 PLAYER_SPEED = 4
 RUN_SPEED = 8
 SAVE_FILE = "savegame.json"
-ENCOUNTER_RATE = 0.4  # 40% chance when stepping in the grass
+ENCOUNTER_RATE = 0.4  # Chance when stepping in the encounter zone
+ENCOUNTER_DELAY_RANGE = (120, 300)  # frames (2-5 seconds)
 
 # Base64-encoded 32x32 placeholder sprite
 CHARACTER_IMAGE_B64 = (
@@ -28,7 +29,9 @@ class Player(pygame.sprite.Sprite):
         self.image = image
         self.rect = self.image.get_rect(topleft=(x, y))
         # battle stats
-        self.name = "Hero"
+        self.name = "Devon"
+        self.level = 1
+        self.items = [None, None, None]
         self.max_hp = 10
         self.hp = 10
         self.strength = 3
@@ -95,13 +98,16 @@ class Menu:
             elif event.key == pygame.K_DOWN:
                 self.selected = (self.selected + 1) % len(self.options)
             elif event.key == pygame.K_RETURN:
-                self.activate_option(player)
+                return self.activate_option(player)
 
     def activate_option(self, player):
         option = self.options[self.selected]
         if option == "Return to Game":
             self.hide()
-        elif option in {"Options", "Team", "Bag"}:
+        elif option == "Team":
+            self.hide()
+            return "team"
+        elif option in {"Options", "Bag"}:
             self.message = f"{option} not implemented"
             self.message_timer = 120
         elif option == "Save Game":
@@ -158,6 +164,59 @@ def load_game(player):
             player.rect.y = data.get("y", player.rect.y)
 
 
+class TeamView:
+    """Simple screen showing the player's moves and stats."""
+
+    def __init__(self, font):
+        self.font = font
+        self.page = 0  # 0=moves, 1=stats
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                self.page = 1 - self.page
+            elif event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
+                return "close"
+        return None
+
+    def draw(self, surface, player):
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill((0, 0, 0))
+        surface.blit(overlay, (0, 0))
+        if self.page == 0:
+            title = self.font.render(f"{player.name}'s Moves", True, (255, 255, 255))
+            surface.blit(title, (50, 50))
+            lines = [
+                "Slash - deal 4-6 damage",
+                "Prepare - raise defense by 1",
+            ]
+            for i, txt in enumerate(lines):
+                render = self.font.render(txt, True, (255, 255, 255))
+                surface.blit(render, (50, 100 + i * 30))
+            hint = self.font.render("Left/Right: Stats  Enter/Esc: Back", True, (200, 200, 200))
+            surface.blit(hint, (50, SCREEN_HEIGHT - 50))
+        else:
+            title = self.font.render(f"{player.name} Lv.{player.level} Stats", True, (255, 255, 255))
+            surface.blit(title, (50, 50))
+            stats = [
+                f"HP: {player.hp}/{player.max_hp}",
+                f"Strength: {player.strength}",
+                f"Defense: {player.defense}",
+                f"Speed: {player.speed}",
+            ]
+            for i, line in enumerate(stats):
+                render = self.font.render(line, True, (255, 255, 255))
+                surface.blit(render, (50, 100 + i * 30))
+            items = [item if item else "-" for item in player.items]
+            item_text = "Held items: " + ", ".join(items)
+            render = self.font.render(item_text, True, (255, 255, 255))
+            surface.blit(render, (50, 250))
+            hint = self.font.render("Left/Right: Moves  Enter/Esc: Back", True, (200, 200, 200))
+            surface.blit(hint, (50, SCREEN_HEIGHT - 50))
+
+
+
 class Room:
     def __init__(self, color, encounter_rect=None):
         self.color = color
@@ -175,6 +234,7 @@ class Battle:
         self.menu_index = 0
         self.move_index = 0
         self.state = "menu"  # menu, moves, message, enemy, victory, defeat, run
+        self.next_state = "menu"
         self.message = ""
         self.msg_timer = 0
 
@@ -210,12 +270,7 @@ class Battle:
                 self.player_move(self.player.moves[self.move_index])
         elif self.state == "message":
             if event.key == pygame.K_RETURN:
-                if self.enemy.hp <= 0:
-                    self.state = "victory"
-                elif self.player.hp <= 0:
-                    self.state = "defeat"
-                else:
-                    self.state = "enemy"
+                self.state = self.next_state
         elif self.state in {"victory", "defeat", "run"}:
             if event.key == pygame.K_RETURN:
                 self.state = "end"
@@ -229,6 +284,7 @@ class Battle:
             dmg = max(1, dmg)
             self.enemy.hp -= dmg
             self.message = f"You used Slash! {self.enemy.name} took {dmg} damage."
+        self.next_state = "victory" if self.enemy.hp <= 0 else "enemy"
         self.state = "message"
         self.msg_timer = 60
 
@@ -237,6 +293,7 @@ class Battle:
         dmg = max(1, dmg)
         self.player.hp -= dmg
         self.message = f"{self.enemy.name} used Scratch! You took {dmg} damage."
+        self.next_state = "defeat" if self.player.hp <= 0 else "menu"
         self.state = "message"
         self.msg_timer = 60
 
@@ -310,6 +367,8 @@ def main():
 
     player = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, player_img)
     menu = Menu(font)
+    team_view = TeamView(font)
+    team_active = False
 
     rooms = [
         Room((60, 120, 60)),
@@ -317,6 +376,8 @@ def main():
     ]
     current_room = 0
     prev_pos = player.rect.topleft
+    encounter_timer = 0
+    encounter_threshold = random.randint(*ENCOUNTER_DELAY_RANGE)
     game_state = "map"
     battle = None
     running = True
@@ -327,16 +388,26 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE and game_state == "map":
-                if menu.visible:
+                if team_active:
+                    team_active = False
+                    menu.show()
+                elif menu.visible:
                     menu.hide()
                 else:
                     menu.show()
-            if game_state == "map" and menu.visible:
-                menu.handle_event(event, player)
+            if game_state == "map" and menu.visible and not team_active:
+                action = menu.handle_event(event, player)
+                if action == "team":
+                    team_active = True
+            elif game_state == "map" and team_active:
+                result = team_view.handle_event(event)
+                if result == "close":
+                    team_active = False
+                    menu.show()
             elif game_state == "battle" and battle:
                 battle.handle_event(event)
 
-        if game_state == "map" and not menu.visible:
+        if game_state == "map" and not menu.visible and not team_active:
             player.handle_input(keys)
             # Room transitions
             if current_room == 0 and player.rect.top < 0:
@@ -349,13 +420,19 @@ def main():
             room = rooms[current_room]
             if room.encounter_rect and room.encounter_rect.colliderect(player.rect):
                 if player.rect.topleft != prev_pos:
-                    if random.random() < ENCOUNTER_RATE:
+                    encounter_timer += 1
+                    if encounter_timer >= encounter_threshold and random.random() < ENCOUNTER_RATE:
                         name = random.choice(["Slime", "Bat"])
                         enemy = Enemy(name, 5, 2, 2, 2, ["Scratch"])
                         enemy_img = enemy_img1 if name == "Slime" else enemy_img2
                         battle = Battle(player, enemy, font, player_img, enemy_img)
                         fade(screen, True)
                         game_state = "battle"
+                        encounter_timer = 0
+                        encounter_threshold = random.randint(*ENCOUNTER_DELAY_RANGE)
+            else:
+                encounter_timer = 0
+                encounter_threshold = random.randint(*ENCOUNTER_DELAY_RANGE)
             prev_pos = player.rect.topleft
 
         if game_state == "battle" and battle:
@@ -376,6 +453,8 @@ def main():
                 pygame.draw.rect(screen, (40, 80, 40), room.encounter_rect)
             screen.blit(player.image, player.rect)
             menu.draw(screen)
+            if team_active:
+                team_view.draw(screen, player)
         elif game_state == "battle" and battle:
             battle.draw(screen)
 
