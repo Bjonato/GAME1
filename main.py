@@ -40,20 +40,23 @@ ITEMS = {
     },
 }
 
-# Base64-encoded 32x32 placeholder sprite
-CHARACTER_IMAGE_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVRIie3NMQEAAAjDMMC/"
-    "ZzDBvlRA01vZJvwHAAAAAAAAAAAAbx2jxAE/0VKtIwAAAABJRU5ErkJggg=="
-)
+# Base64-encoded 32x32 knight sprite with two walking frames
+CHARACTER_FRAMES_B64 = [
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAkklEQVR4nO2VsQ3AIAwESZQ5GIKJXFAxEBWFh6FmpdCHIDBB+iL+0sLm9Jb8xqhUqr/rkDYw8z16Q0TTc08pwG7BAa7VRiJqaswsngN3AA6wvIIVu98EdwAOIF5BznkrwPBixRiby1dK6b53zjW1EEL3H/gKFAAOII5j7/0wjlNKGscKoADTEofRMwestZ8A4A5UY8UZJparjTMAAAAASUVORK5CYII=",
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAApUlEQVR4nO2WsQ3EIAxFk9NN5IlcUDEQFYWHofYQ1OyQ1BGnxEaRfnH+HcjA07eF/raFQqF/1+49ICLHUw0zm+/9eAHeFhzgu3qQmac9EXHfA3cADrDcghW7fwnuABzA3YLW2qsAcAfgAKY/u5Qy/f+qOtUR0bSXc759A+5AAMAB3IEkpfQYSGqtEUgCwKylPDDGuKx775c1ER2qahpEtwOeCbfoBGOcIaGV2JaWAAAAAElFTkSuQmCC",
+]
 
 pygame.init()
 
 
 class Player(pygame.sprite.Sprite):
-    def __init__(self, x, y, image):
+    def __init__(self, x, y, images):
         super().__init__()
-        self.image = image
+        self.images = images
+        self.image = images[0]
         self.rect = self.image.get_rect(topleft=(x, y))
+        self.anim_index = 0
+        self.anim_timer = 0
         # battle stats
         self.name = "Devon"
         self.level = 1
@@ -114,6 +117,16 @@ class Player(pygame.sprite.Sprite):
             dy += speed
         self.rect.x += dx
         self.rect.y += dy
+        if dx or dy:
+            self.anim_timer += 1
+            if self.anim_timer >= 10:
+                self.anim_timer = 0
+                self.anim_index = (self.anim_index + 1) % len(self.images)
+            self.image = self.images[self.anim_index]
+        else:
+            self.anim_timer = 0
+            self.anim_index = 0
+            self.image = self.images[0]
 
     def xp_to_next(self):
         return 5 + (self.level - 1) * 2
@@ -706,8 +719,11 @@ def main():
 
     hardcore = select_mode(screen, font)
 
-    img_bytes = base64.b64decode(CHARACTER_IMAGE_B64)
-    player_img = pygame.image.load(BytesIO(img_bytes)).convert_alpha()
+    player_imgs = []
+    for data in CHARACTER_FRAMES_B64:
+        img_bytes = base64.b64decode(data)
+        player_imgs.append(pygame.image.load(BytesIO(img_bytes)).convert_alpha())
+    player_img = player_imgs[0]
     enemy_img1 = pygame.Surface((32, 32))
     enemy_img1.fill((200, 0, 0))
     enemy_img2 = pygame.Surface((32, 32))
@@ -715,7 +731,7 @@ def main():
     enemy_img3 = pygame.Surface((32, 32))
     enemy_img3.fill((0, 200, 0))
 
-    player = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, player_img)
+    player = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, player_imgs)
     menu = Menu(font)
     team_view = TeamView(font)
     bag_view = BagView(font)

@@ -12,8 +12,9 @@ Execute:
 python3 main.py
 ```
 
-Use the arrow keys to move. Hold `Shift` to run. Press `Esc` to open or close
-the pause menu.
+Use the arrow keys to move. Hold `Shift` to run. The player sprite is a simple
+knight with a two-frame walking animation that plays while moving. Press `Esc`
+to open or close the pause menu.
 
 ### Pause menu options
 - **Return to Game**: Close the menu
@@ -45,8 +46,8 @@ point. After each level up a screen will prompt you to raise either Strength,
 Defense, or Speed.
 
 At startup you can select **Regular** or **Hardcore** mode. Hardcore boosts all
+enemies by one level, making battles tougher but yielding more XP.
 
 Coins are displayed in the pause menu. Visit the shop in the first room to
 purchase a ShortSword (+1 strength), LongSword (+3 strength, -1 speed) or Health
 Potions.
-enemies by one level, making battles tougher but yielding more XP.
