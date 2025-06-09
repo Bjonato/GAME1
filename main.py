@@ -13,6 +13,32 @@ RUN_SPEED = 8
 SAVE_FILE = "savegame.json"
 ENCOUNTER_RATE = 0.4  # Chance when stepping in the encounter zone
 ENCOUNTER_DELAY_RANGE = (120, 300)  # frames (2-5 seconds)
+COIN_DROP = {
+    1: (1, 3),
+    2: (2, 4),
+    3: (3, 5),
+}
+
+# Item definitions used for the shop and inventory
+ITEMS = {
+    "ShortSword": {
+        "type": "weapon",
+        "strength": 1,
+        "price": 5,
+    },
+    "LongSword": {
+        "type": "weapon",
+        "strength": 3,
+        "speed": -1,
+        "price": 10,
+    },
+    "Health Potion": {
+        "type": "potion",
+        "heal": 5,
+        "price": 3,
+        "stack": 5,
+    },
+}
 
 # Base64-encoded 32x32 placeholder sprite
 CHARACTER_IMAGE_B64 = (
@@ -31,15 +57,49 @@ class Player(pygame.sprite.Sprite):
         # battle stats
         self.name = "Devon"
         self.level = 1
-        self.items = [None, None, None]
+        self.weapon = None
+        self.inventory = [None] * 25  # 5x5 grid
+        self.coins = 0
         self.max_hp = 10
         self.hp = 10
-        self.strength = 3
-        self.defense = 3
-        self.speed = 3
+        self.base_strength = 3
+        self.base_defense = 3
+        self.base_speed = 3
+        self.strength = self.base_strength
+        self.defense = self.base_defense
+        self.speed = self.base_speed
         self.moves = ["Slash", "Prepare"]
         self.xp = 0
         self.stat_points = 0
+
+    def recalc_stats(self):
+        self.strength = self.base_strength
+        self.defense = self.base_defense
+        self.speed = self.base_speed
+        if self.weapon:
+            data = ITEMS.get(self.weapon, {})
+            self.strength += data.get("strength", 0)
+            self.speed += data.get("speed", 0)
+
+    def add_item(self, name):
+        for i, slot in enumerate(self.inventory):
+            if not slot:
+                self.inventory[i] = {"name": name, "qty": 1}
+                return True
+            if slot["name"] == name and ITEMS.get(name, {}).get("stack"):
+                if slot["qty"] < ITEMS[name]["stack"]:
+                    self.inventory[i]["qty"] += 1
+                    return True
+        return False
+
+    def remove_item(self, index):
+        item = self.inventory[index]
+        if not item:
+            return None
+        item["qty"] -= 1
+        if item["qty"] <= 0:
+            self.inventory[index] = None
+        return item["name"]
 
     def handle_input(self, keys):
         speed = RUN_SPEED if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else PLAYER_SPEED
@@ -91,7 +151,10 @@ def create_enemy(name, level):
     """Create an enemy with stats scaled by level."""
     hp = 5 + (level - 1) * 2
     stat = 2 + (level - 1)
-    return Enemy(name, level, hp, stat, stat, stat, ["Scratch"])
+    moves = ["Scratch"]
+    if name == "Gremlin":
+        moves.append("Slime")
+    return Enemy(name, level, hp, stat, stat, stat, moves)
 
 
 class Menu:
@@ -134,7 +197,10 @@ class Menu:
         elif option == "Team":
             self.hide()
             return "team"
-        elif option in {"Options", "Bag"}:
+        elif option == "Bag":
+            self.hide()
+            return "bag"
+        elif option == "Options":
             self.message = f"{option} not implemented"
             self.message_timer = 120
         elif option == "Save Game":
@@ -155,7 +221,7 @@ class Menu:
         else:
             self.message = ""
 
-    def draw(self, surface):
+    def draw(self, surface, player):
         if not self.visible:
             return
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -168,17 +234,25 @@ class Menu:
         menu_x = (SCREEN_WIDTH - menu_width) // 2
         menu_y = (SCREEN_HEIGHT - menu_height) // 2
         pygame.draw.rect(surface, (50, 50, 50), (menu_x, menu_y, menu_width, menu_height))
+        coin_txt = self.font.render(f"Coins: {player.coins}", True, (255, 255, 255))
+        surface.blit(coin_txt, (menu_x, menu_y - 40))
         for i, text in enumerate(self.options):
             color = (255, 255, 255) if i == self.selected else (170, 170, 170)
             render = self.font.render(text, True, color)
             surface.blit(render, (menu_x + 20, menu_y + 20 + i * 40))
         if self.message:
             msg = self.font.render(self.message, True, (255, 255, 0))
-            surface.blit(msg, (menu_x, menu_y - 40))
+            surface.blit(msg, (menu_x, menu_y - 70))
 
 
 def save_game(player):
-    data = {"x": player.rect.x, "y": player.rect.y}
+    data = {
+        "x": player.rect.x,
+        "y": player.rect.y,
+        "coins": player.coins,
+        "inventory": player.inventory,
+        "weapon": player.weapon,
+    }
     with open(SAVE_FILE, "w") as f:
         json.dump(data, f)
 
@@ -189,6 +263,10 @@ def load_game(player):
             data = json.load(f)
             player.rect.x = data.get("x", player.rect.x)
             player.rect.y = data.get("y", player.rect.y)
+            player.coins = data.get("coins", 0)
+            player.inventory = data.get("inventory", [None] * 25)
+            player.weapon = data.get("weapon")
+            player.recalc_stats()
 
 
 class TeamView:
@@ -198,12 +276,17 @@ class TeamView:
         self.font = font
         self.page = 0  # 0=moves, 1=stats
 
-    def handle_event(self, event):
+    def handle_event(self, event, player):
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
                 self.page = 1 - self.page
             elif event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
                 return "close"
+            elif event.key == pygame.K_u and self.page == 1:
+                if player.weapon:
+                    player.add_item(player.weapon)
+                    player.weapon = None
+                    player.recalc_stats()
         return None
 
     def draw(self, surface, player):
@@ -236,11 +319,10 @@ class TeamView:
             for i, line in enumerate(stats):
                 render = self.font.render(line, True, (255, 255, 255))
                 surface.blit(render, (50, 100 + i * 30))
-            items = [item if item else "-" for item in player.items]
-            item_text = "Held items: " + ", ".join(items)
-            render = self.font.render(item_text, True, (255, 255, 255))
-            surface.blit(render, (50, 250))
-            hint = self.font.render("Left/Right: Moves  Enter/Esc: Back", True, (200, 200, 200))
+            weapon = player.weapon if player.weapon else "-"
+            wtxt = self.font.render(f"Weapon: {weapon}", True, (255, 255, 255))
+            surface.blit(wtxt, (50, 250))
+            hint = self.font.render("Left/Right: Moves  U: Unequip  Enter/Esc: Back", True, (200, 200, 200))
             surface.blit(hint, (50, SCREEN_HEIGHT - 50))
 
 
@@ -268,11 +350,12 @@ class LevelUpView:
             elif event.key == pygame.K_RETURN:
                 stat = self.options[self.index].lower()
                 if stat == "strength":
-                    player.strength += 1
+                    player.base_strength += 1
                 elif stat == "defense":
-                    player.defense += 1
+                    player.base_defense += 1
                 else:
-                    player.speed += 1
+                    player.base_speed += 1
+                player.recalc_stats()
                 player.stat_points -= 1
                 self.active = False
                 return "done"
@@ -298,6 +381,125 @@ class LevelUpView:
         surface.blit(hint, hr)
 
 
+class BagView:
+    """Inventory grid allowing item use or equip."""
+
+    def __init__(self, font):
+        self.font = font
+        self.active = False
+        self.index = 0
+
+    def open(self):
+        self.active = True
+        self.index = 0
+
+    def handle_event(self, event, player):
+        if not self.active:
+            return None
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.active = False
+                return "close"
+            elif event.key == pygame.K_LEFT:
+                self.index = (self.index - 1) % 25
+            elif event.key == pygame.K_RIGHT:
+                self.index = (self.index + 1) % 25
+            elif event.key == pygame.K_UP:
+                self.index = (self.index - 5) % 25
+            elif event.key == pygame.K_DOWN:
+                self.index = (self.index + 5) % 25
+            elif event.key == pygame.K_RETURN:
+                item = player.inventory[self.index]
+                if not item:
+                    return None
+                name = item["name"]
+                if ITEMS[name]["type"] == "weapon":
+                    if player.weapon:
+                        player.add_item(player.weapon)
+                    player.weapon = name
+                    player.recalc_stats()
+                    player.remove_item(self.index)
+                else:  # potion
+                    if player.hp < player.max_hp:
+                        player.hp = min(player.max_hp, player.hp + ITEMS[name]["heal"])
+                        player.remove_item(self.index)
+        return None
+
+    def draw(self, surface, player):
+        if not self.active:
+            return
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill((0, 0, 0))
+        surface.blit(overlay, (0, 0))
+        start_x = 100
+        start_y = 80
+        for idx in range(25):
+            x = start_x + (idx % 5) * 100
+            y = start_y + (idx // 5) * 60
+            rect = pygame.Rect(x, y, 90, 50)
+            pygame.draw.rect(surface, (80, 80, 80), rect, 2)
+            item = player.inventory[idx]
+            if item:
+                txt = f"{item['name']} x{item['qty']}" if ITEMS[item['name']].get('stack') else item['name']
+                render = self.font.render(txt, True, (255, 255, 255))
+                surface.blit(render, (x + 5, y + 15))
+            if idx == self.index:
+                pygame.draw.rect(surface, (255, 255, 0), rect, 3)
+        hint = self.font.render("Arrows: move  Enter: use/equip  Esc: back", True, (200, 200, 200))
+        surface.blit(hint, (50, SCREEN_HEIGHT - 40))
+
+
+class ShopView:
+    """Simple shop interface for buying items."""
+
+    def __init__(self, font):
+        self.font = font
+        self.active = False
+        self.index = 0
+        self.items = ["ShortSword", "LongSword", "Health Potion"]
+
+    def open(self):
+        self.active = True
+        self.index = 0
+
+    def handle_event(self, event, player):
+        if not self.active:
+            return None
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.active = False
+                return "close"
+            elif event.key in (pygame.K_UP, pygame.K_DOWN):
+                self.index = (self.index + (1 if event.key == pygame.K_DOWN else -1)) % len(self.items)
+            elif event.key == pygame.K_RETURN:
+                name = self.items[self.index]
+                price = ITEMS[name]["price"]
+                if player.coins >= price and player.add_item(name):
+                    player.coins -= price
+        return None
+
+    def draw(self, surface, player):
+        if not self.active:
+            return
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay.set_alpha(200)
+        overlay.fill((0, 0, 0))
+        surface.blit(overlay, (0, 0))
+        title = self.font.render("Shop", True, (255, 255, 255))
+        surface.blit(title, (50, 50))
+        for i, name in enumerate(self.items):
+            price = ITEMS[name]["price"]
+            txt = f"{name} - {price}c"
+            color = (255, 255, 255) if i == self.index else (170, 170, 170)
+            render = self.font.render(txt, True, color)
+            surface.blit(render, (50, 100 + i * 40))
+        wallet = self.font.render(f"Coins: {player.coins}", True, (255, 255, 0))
+        surface.blit(wallet, (50, SCREEN_HEIGHT - 60))
+        hint = self.font.render("Up/Down select  Enter buy  Esc exit", True, (200, 200, 200))
+        surface.blit(hint, (50, SCREEN_HEIGHT - 30))
+
+
 class Room:
     def __init__(self, color, encounter_rect=None, enemy_level=1):
         self.color = color
@@ -320,6 +522,9 @@ class Battle:
         self.message = ""
         self.msg_timer = 0
         self.victory_xp = 0
+        self.victory_coins = 0
+        self.orig_speed = player.speed
+        self.slow_turns = 0
 
     def handle_event(self, event):
         if event.type != pygame.KEYDOWN:
@@ -355,17 +560,23 @@ class Battle:
             if event.key == pygame.K_RETURN:
                 self.state = self.next_state
                 if self.state == "victory":
-                    self.message = f"You won! Gained {self.victory_xp} XP."
+                    self.message = f"You won! Gained {self.victory_xp} XP and {self.victory_coins} coins."
                 elif self.state == "defeat":
                     self.message = "You were defeated..."
         elif self.state in {"victory", "defeat", "run"}:
             if event.key == pygame.K_RETURN:
                 if self.state == "victory" and self.victory_xp:
                     self.player.gain_xp(self.victory_xp)
+                    self.player.coins += self.victory_coins
                     self.victory_xp = 0
+                    self.victory_coins = 0
                 self.state = "end"
 
     def player_move(self, name):
+        if self.slow_turns > 0:
+            self.slow_turns -= 1
+            if self.slow_turns == 0:
+                self.player.speed = self.orig_speed
         if name == "Prepare":
             self.player.defense += 1
             self.message = "You used Prepare!"
@@ -377,16 +588,28 @@ class Battle:
         if self.enemy.hp <= 0:
             self.next_state = "victory"
             self.victory_xp = self.enemy.xp
+            drop = COIN_DROP.get(self.enemy.level, (self.enemy.level, self.enemy.level + 2))
+            self.victory_coins = random.randint(*drop)
         else:
             self.next_state = "enemy"
         self.state = "message"
         self.msg_timer = 60
 
     def enemy_move(self):
-        dmg = random.randint(2, 4) + self.enemy.strength - self.player.defense
-        dmg = max(1, dmg)
-        self.player.hp -= dmg
-        self.message = f"{self.enemy.name} used Scratch! You took {dmg} damage."
+        move = random.choice(self.enemy.moves)
+        if move == "Slime":
+            dmg = random.randint(1, 2) + self.enemy.strength - self.player.defense
+            dmg = max(1, dmg)
+            self.player.hp -= dmg
+            self.message = f"{self.enemy.name} used Slime! You took {dmg} damage."
+            if self.slow_turns == 0:
+                self.player.speed -= 1
+            self.slow_turns = 2
+        else:  # Scratch
+            dmg = random.randint(2, 4) + self.enemy.strength - self.player.defense
+            dmg = max(1, dmg)
+            self.player.hp -= dmg
+            self.message = f"{self.enemy.name} used Scratch! You took {dmg} damage."
         self.next_state = "defeat" if self.player.hp <= 0 else "menu"
         self.state = "message"
         self.msg_timer = 60
@@ -407,7 +630,8 @@ class Battle:
         surface.blit(self.player_img, player_rect)
         # HP bars
         self.draw_bar(surface, 50, SCREEN_HEIGHT - 170, self.player.hp, self.player.max_hp, self.player.name)
-        self.draw_bar(surface, SCREEN_WIDTH - 250, 130, self.enemy.hp, self.enemy.max_hp, self.enemy.name)
+        label = f"{self.enemy.name} Lv.{self.enemy.level}"
+        self.draw_bar(surface, SCREEN_WIDTH - 250, 130, self.enemy.hp, self.enemy.max_hp, label)
         if self.state == "menu":
             self.draw_menu(surface, self.menu_opts, self.menu_index)
         elif self.state == "moves":
@@ -488,16 +712,24 @@ def main():
     enemy_img1.fill((200, 0, 0))
     enemy_img2 = pygame.Surface((32, 32))
     enemy_img2.fill((0, 0, 200))
+    enemy_img3 = pygame.Surface((32, 32))
+    enemy_img3.fill((0, 200, 0))
 
     player = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, player_img)
     menu = Menu(font)
     team_view = TeamView(font)
+    bag_view = BagView(font)
+    shop_view = ShopView(font)
     levelup_view = LevelUpView(font)
     team_active = False
+    bag_active = False
+    shop_active = False
 
+    shop_rect = pygame.Rect(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT - 120, 80, 80)
     rooms = [
         Room((60, 120, 60), enemy_level=1),
         Room((80, 100, 140), pygame.Rect(300, 200, 200, 200), enemy_level=1),
+        Room((100, 80, 120), pygame.Rect(250, 150, 300, 200), enemy_level=2),
     ]
     current_room = 0
     prev_pos = player.rect.topleft
@@ -523,19 +755,35 @@ def main():
             if levelup_view.active:
                 levelup_view.handle_event(event, player)
                 continue
-            if game_state == "map" and menu.visible and not team_active:
+            if game_state == "map" and not menu.visible and not team_active and not bag_active and not shop_active:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and current_room == 0 and player.rect.colliderect(shop_rect):
+                    shop_active = True
+                    shop_view.open()
+            if game_state == "map" and menu.visible and not team_active and not bag_active and not shop_active:
                 action = menu.handle_event(event, player)
                 if action == "team":
                     team_active = True
+                elif action == "bag":
+                    bag_active = True
+                    bag_view.open()
             elif game_state == "map" and team_active:
-                result = team_view.handle_event(event)
+                result = team_view.handle_event(event, player)
                 if result == "close":
                     team_active = False
                     menu.show()
+            elif game_state == "map" and bag_active:
+                result = bag_view.handle_event(event, player)
+                if result == "close":
+                    bag_active = False
+                    menu.show()
+            elif game_state == "map" and shop_active:
+                result = shop_view.handle_event(event, player)
+                if result == "close":
+                    shop_active = False
             elif game_state == "battle" and battle:
                 battle.handle_event(event)
 
-        if game_state == "map" and not menu.visible and not team_active:
+        if game_state == "map" and not menu.visible and not team_active and not bag_active and not shop_active:
             player.handle_input(keys)
             # Room transitions
             if current_room == 0 and player.rect.top < 0:
@@ -544,16 +792,30 @@ def main():
             elif current_room == 1 and player.rect.bottom > SCREEN_HEIGHT:
                 current_room = 0
                 player.rect.top = 0
+            elif current_room == 1 and player.rect.top < 0:
+                current_room = 2
+                player.rect.bottom = SCREEN_HEIGHT
+            elif current_room == 2 and player.rect.bottom > SCREEN_HEIGHT:
+                current_room = 1
+                player.rect.top = 0
             # Encounter check
             room = rooms[current_room]
             if room.encounter_rect and room.encounter_rect.colliderect(player.rect):
                 if player.rect.topleft != prev_pos:
                     encounter_timer += 1
                     if encounter_timer >= encounter_threshold and random.random() < ENCOUNTER_RATE:
-                        name = random.choice(["Slime", "Bat"])
+                        if current_room == 2:
+                            name = "Gremlin"
+                        else:
+                            name = random.choice(["Slime", "Bat"])
                         lvl = room.enemy_level + (1 if hardcore else 0)
                         enemy = create_enemy(name, lvl)
-                        enemy_img = enemy_img1 if name == "Slime" else enemy_img2
+                        if name == "Slime":
+                            enemy_img = enemy_img1
+                        elif name == "Bat":
+                            enemy_img = enemy_img2
+                        else:
+                            enemy_img = enemy_img3
                         battle = Battle(player, enemy, font, player_img, enemy_img)
                         fade(screen, True)
                         game_state = "battle"
@@ -573,6 +835,7 @@ def main():
                 game_state = "map"
                 battle = None
                 player.hp = max(1, player.hp)  # ensure not zero
+                player.recalc_stats()
                 if player.stat_points > 0:
                     levelup_view.start()
 
@@ -582,10 +845,16 @@ def main():
             screen.fill(room.color)
             if room.encounter_rect:
                 pygame.draw.rect(screen, (40, 80, 40), room.encounter_rect)
+            if current_room == 0:
+                pygame.draw.rect(screen, (200, 200, 50), shop_rect)
             screen.blit(player.image, player.rect)
-            menu.draw(screen)
+            menu.draw(screen, player)
             if team_active:
                 team_view.draw(screen, player)
+            if bag_active:
+                bag_view.draw(screen, player)
+            if shop_active:
+                shop_view.draw(screen, player)
             if levelup_view.active:
                 levelup_view.draw(screen)
         elif game_state == "battle" and battle:
