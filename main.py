@@ -4,11 +4,12 @@ import os
 import sys
 import random
 from io import BytesIO
-import pygame
 
 # Avoid audio initialization errors on systems without sound hardware
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 os.environ.setdefault("XDG_RUNTIME_DIR", "/tmp")
+
+import pygame
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
