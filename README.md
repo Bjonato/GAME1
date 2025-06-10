@@ -11,6 +11,8 @@ Execute:
 ```bash
 python3 main.py
 ```
+If your system lacks audio support you may see ALSA warnings. The game sets
+`SDL_AUDIODRIVER=dummy` automatically to suppress them.
 
 Use the arrow keys to move. Hold `Shift` to run. The player sprite is a simple
 knight with a two-frame walking animation that plays while moving. Press `Esc`
