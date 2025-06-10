@@ -19,6 +19,23 @@ COIN_DROP = {
     3: (3, 5),
 }
 
+# Item drop chances per room
+ITEM_DROP = {
+    0: [
+        ("Health Potion", 0.15),
+        ("Elite Scraps", 0.05),
+        ("Good Scraps", 0.10),
+        ("Scraps", 0.20),
+    ],
+    1: [
+        ("Health Potion", 0.15),
+        ("Elite Scraps", 0.05),
+        ("Good Scraps", 0.10),
+        ("Scraps", 0.20),
+        ("Slime", 0.10),
+    ],
+}
+
 # Item definitions used for the shop and inventory
 ITEMS = {
     "ShortSword": {
@@ -36,6 +53,26 @@ ITEMS = {
         "type": "potion",
         "heal": 5,
         "price": 3,
+        "stack": 5,
+    },
+    "Scraps": {
+        "type": "craft",
+        "price": 1,
+        "stack": 25,
+    },
+    "Good Scraps": {
+        "type": "craft",
+        "price": 2,
+        "stack": 25,
+    },
+    "Elite Scraps": {
+        "type": "craft",
+        "price": 3,
+        "stack": 25,
+    },
+    "Slime": {
+        "type": "craft",
+        "price": 2,
         "stack": 5,
     },
 }
@@ -513,20 +550,28 @@ class ShopView:
         surface.blit(hint, (50, SCREEN_HEIGHT - 30))
 
 
+class Sign:
+    def __init__(self, rect, text):
+        self.rect = rect
+        self.text = text
+
+
 class Room:
-    def __init__(self, color, encounter_rect=None, enemy_level=1):
+    def __init__(self, color, encounter_rect=None, enemy_level=1, sign=None):
         self.color = color
         self.encounter_rect = encounter_rect
         self.enemy_level = enemy_level
+        self.sign = sign
 
 
 class Battle:
-    def __init__(self, player, enemy, font, player_img, enemy_img):
+    def __init__(self, player, enemy, font, player_img, enemy_img, room_idx):
         self.player = player
         self.enemy = enemy
         self.font = font
         self.player_img = player_img
         self.enemy_img = enemy_img
+        self.room_idx = room_idx
         self.menu_opts = ["Fight", "Bag", "Switch", "Run"]
         self.menu_index = 0
         self.move_index = 0
@@ -536,6 +581,7 @@ class Battle:
         self.msg_timer = 0
         self.victory_xp = 0
         self.victory_coins = 0
+        self.victory_item = None
         self.orig_speed = player.speed
         self.slow_turns = 0
 
@@ -583,6 +629,16 @@ class Battle:
                     self.player.coins += self.victory_coins
                     self.victory_xp = 0
                     self.victory_coins = 0
+                    if self.victory_item:
+                        if self.player.add_item(self.victory_item):
+                            self.message = f"Found {self.victory_item}!"
+                        else:
+                            self.message = f"Couldn't carry {self.victory_item}."
+                        self.victory_item = None
+                        self.state = "message"
+                        self.msg_timer = 60
+                        self.next_state = "end"
+                        return
                 self.state = "end"
 
     def player_move(self, name):
@@ -603,6 +659,7 @@ class Battle:
             self.victory_xp = self.enemy.xp
             drop = COIN_DROP.get(self.enemy.level, (self.enemy.level, self.enemy.level + 2))
             self.victory_coins = random.randint(*drop)
+            self.victory_item = self.roll_drop()
         else:
             self.next_state = "enemy"
         self.state = "message"
@@ -626,6 +683,13 @@ class Battle:
         self.next_state = "defeat" if self.player.hp <= 0 else "menu"
         self.state = "message"
         self.msg_timer = 60
+
+    def roll_drop(self):
+        drops = ITEM_DROP.get(self.room_idx, [])
+        for name, chance in drops:
+            if random.random() < chance:
+                return name
+        return None
 
     def update(self):
         if self.state == "enemy" and self.msg_timer == 0:
@@ -743,9 +807,22 @@ def main():
 
     shop_rect = pygame.Rect(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT - 120, 80, 80)
     rooms = [
-        Room((60, 120, 60), enemy_level=1),
-        Room((80, 100, 140), pygame.Rect(300, 200, 200, 200), enemy_level=1),
-        Room((100, 80, 120), pygame.Rect(250, 150, 300, 200), enemy_level=2),
+        Room(
+            (60, 120, 60),
+            enemy_level=1,
+            sign=Sign(pygame.Rect(SCREEN_WIDTH // 2 - 20, 40, 40, 30), "Route 1"),
+        ),
+        Room(
+            (80, 100, 140),
+            pygame.Rect(300, 200, 200, 200),
+            enemy_level=1,
+            sign=Sign(pygame.Rect(SCREEN_WIDTH // 2 - 60, 40, 120, 30), "Sewer Entrance"),
+        ),
+        Room(
+            (100, 80, 120),
+            pygame.Rect(250, 150, 300, 200),
+            enemy_level=2,
+        ),
     ]
     current_room = 0
     prev_pos = player.rect.topleft
@@ -832,7 +909,7 @@ def main():
                             enemy_img = enemy_img2
                         else:
                             enemy_img = enemy_img3
-                        battle = Battle(player, enemy, font, player_img, enemy_img)
+                        battle = Battle(player, enemy, font, player_img, enemy_img, current_room)
                         fade(screen, True)
                         game_state = "battle"
                         encounter_timer = 0
@@ -863,6 +940,13 @@ def main():
                 pygame.draw.rect(screen, (40, 80, 40), room.encounter_rect)
             if current_room == 0:
                 pygame.draw.rect(screen, (200, 200, 50), shop_rect)
+            if room.sign:
+                pygame.draw.rect(screen, (150, 100, 50), room.sign.rect)
+                if player.rect.colliderect(room.sign.rect):
+                    txt = font.render(room.sign.text, True, (255, 255, 255))
+                    rect = txt.get_rect(center=(room.sign.rect.centerx, room.sign.rect.top - 10))
+                    pygame.draw.rect(screen, (0, 0, 0), rect.inflate(8, 8))
+                    screen.blit(txt, rect)
             screen.blit(player.image, player.rect)
             menu.draw(screen, player)
             if team_active:
